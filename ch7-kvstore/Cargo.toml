@@ -1,0 +1,22 @@
+[package]
+name = "kvstore"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byteorder = "1.4.3"
+crc = "3.0.0"
+serde_derive = "1.0.143"
+
+[dev-dependencies]
+tempfile = "3.3.0"
+
+[lib]
+name = "libkvstore"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kvs"
+path = "src/main.rs"
