@@ -34,15 +34,23 @@ impl Store {
             .read(true)
             .write(true)
             .append(false)
-            .create(true)
+            .truncate(false)
+            .create_new(true)
             .open(p)?;
         let index = HashMap::new();
         Ok(Store { f, index })
     }
 
-    /* pub fn open(p: &path::Path) -> io::Result<Store> {
-        todo!()
-    } */
+    pub fn open(p: &path::Path) -> io::Result<Store> {
+        let f = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .append(false)
+            .create(true)
+            .open(p)?;
+        let index = HashMap::new();
+        Ok(Store { f, index })
+    }
 
     pub fn insert(&mut self, key: &ByteStr, val: &ByteStr) -> io::Result<()> {
         let data = pack_data(&[key, val]);
@@ -99,18 +107,19 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use uuid;
+
     use super::*;
 
-    fn instantiate() -> Store {
-        let p = tempfile::NamedTempFile::new()
-            .expect("Failed creating tempfile")
-            .into_temp_path();
-        Store::new(&p).expect("Failed creating store")
+    fn random_path() -> path::PathBuf {
+        let mut p = tempfile::tempdir().unwrap().into_path();
+        p.push(uuid::Uuid::new_v4().to_string());
+        p
     }
 
     #[test]
     fn test_create_read_single() {
-        let mut store = instantiate();
+        let mut store = Store::new(&random_path()).unwrap();
 
         store.insert(b"abc", b"123").expect("insert");
 
@@ -119,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_read_none_existing() {
-        let mut store = instantiate();
+        let mut store = Store::new(&random_path()).unwrap();
 
         assert_eq!(store.get(b"123").unwrap(), None);
         store.insert(b"abc", b"123").unwrap();
@@ -128,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_create_read_multiple() {
-        let mut store = instantiate();
+        let mut store = Store::new(&random_path()).unwrap();
 
         store.insert(b"abc", b"123").unwrap();
         store.insert(b"def", b"456").unwrap();
@@ -148,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_create_read_overwrite() {
-        let mut store = instantiate();
+        let mut store = Store::new(&random_path()).unwrap();
 
         store.insert(b"abc", b"123").unwrap();
         store.insert(b"def", b"456").unwrap();
@@ -160,5 +169,20 @@ mod tests {
 
         assert_eq!(store.get(b"abc").unwrap(), Some(b"789".to_vec()));
         assert_eq!(store.get(b"def").unwrap(), Some(b"456".to_vec()));
+    }
+
+    #[test]
+    fn test_new_complains_about_existing_file() {
+        let p = random_path();
+
+        {
+            Store::new(&p).unwrap();
+        }
+
+        match Store::new(&p) {
+            Ok(_) => panic!("Store::new should fail with existing file"),
+            Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => (),
+            _ => panic!("Wrong error reported"),
+        }
     }
 }

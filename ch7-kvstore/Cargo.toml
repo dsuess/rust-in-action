@@ -13,6 +13,13 @@ serde_derive = "1.0.143"
 [dev-dependencies]
 tempfile = "3.3.0"
 
+[dev-dependencies.uuid]
+version = "1.1.2"
+features = [
+    "v4"
+]
+
+
 [lib]
 name = "libkvstore"
 path = "src/lib.rs"
