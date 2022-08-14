@@ -45,11 +45,46 @@ impl Store {
         let f = fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .append(false)
-            .create(true)
+            .append(true)
+            .truncate(false)
+            .create(false)
             .open(p)?;
         let index = HashMap::new();
-        Ok(Store { f, index })
+        let mut store = Store { f, index };
+        store.rebuild_index()?;
+        Ok(store)
+    }
+
+    fn rebuild_index(&mut self) -> io::Result<()> {
+        self.index.clear();
+        let mut buf = io::BufReader::new(&mut self.f);
+        buf.seek(io::SeekFrom::Start(0))?;
+
+        loop {
+            let current_position = buf.seek(io::SeekFrom::Current(0))?;
+            match Store::parse_record(&mut buf) {
+                Ok((key, _)) => self.index.insert(key, current_position),
+                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+                Err(e) => return Err(e),
+            };
+        }
+    }
+
+    fn parse_record<R: Read>(buf: &mut R) -> io::Result<(ByteString, ByteString)> {
+        let checksum_stored = buf.read_u32::<LittleEndian>()?;
+        let key_len = buf.read_u32::<LittleEndian>()?;
+        let val_len = buf.read_u32::<LittleEndian>()?;
+
+        let mut data: ByteString = vec![0; (key_len + val_len) as usize];
+        buf.read_exact(data.as_mut_slice())?;
+
+        let checksum = CRC32.checksum(&data);
+        if checksum != checksum_stored {
+            return Err(io::Error::new(io::ErrorKind::Other, "Checksum mismatch"));
+        }
+
+        let val = data.split_off(key_len as usize);
+        Ok((data, val))
     }
 
     pub fn insert(&mut self, key: &ByteStr, val: &ByteStr) -> io::Result<()> {
@@ -76,20 +111,7 @@ impl Store {
 
         let mut buf = io::BufReader::new(&mut self.f);
         buf.seek(io::SeekFrom::Start(position))?;
-
-        let checksum_stored = buf.read_u32::<LittleEndian>()?;
-        let key_len = buf.read_u32::<LittleEndian>()?;
-        let val_len = buf.read_u32::<LittleEndian>()?;
-
-        let mut data: ByteString = vec![0; (key_len + val_len) as usize];
-        buf.read_exact(data.as_mut_slice())?;
-
-        let checksum = CRC32.checksum(&data);
-        if checksum != checksum_stored {
-            return Err(io::Error::new(io::ErrorKind::Other, "Checksum mismatch"));
-        }
-
-        let val = data.split_off(key_len as usize);
+        let (_, val) = Store::parse_record(&mut buf)?;
 
         Ok(Some(val))
     }
@@ -184,5 +206,44 @@ mod tests {
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => (),
             _ => panic!("Wrong error reported"),
         }
+    }
+
+    #[test]
+    fn test_open_complains_about_no_file() {
+        let store = Store::open(&random_path());
+        match store {
+            Ok(_) => panic!("Store::open should fail with no file"),
+            Err(ref e) if e.kind() == io::ErrorKind::NotFound => (),
+            _ => panic!("Wrong error reported"),
+        }
+    }
+
+    #[test]
+    fn test_open_correct() {
+        let p = random_path();
+        {
+            let mut store = Store::new(&p).unwrap();
+            store.insert(b"abc", b"123").unwrap();
+            store.insert(b"def", b"456").unwrap();
+        }
+
+        let mut store = Store::open(&p).unwrap();
+        assert_eq!(store.get(b"abc").unwrap(), Some(b"123".to_vec()));
+        assert_eq!(store.get(b"def").unwrap(), Some(b"456".to_vec()));
+    }
+
+    #[test]
+    fn test_open_correct_with_duplicates() {
+        let p = random_path();
+        {
+            let mut store = Store::new(&p).unwrap();
+            store.insert(b"abc", b"123").unwrap();
+            store.insert(b"def", b"456").unwrap();
+            store.insert(b"abc", b"789").unwrap();
+        }
+
+        let mut store = Store::open(&p).unwrap();
+        assert_eq!(store.get(b"abc").unwrap(), Some(b"789".to_vec()));
+        assert_eq!(store.get(b"def").unwrap(), Some(b"456".to_vec()));
     }
 }
